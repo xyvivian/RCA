@@ -6,7 +6,7 @@ import collections
 from copy import deepcopy
 import seaborn as sns
 from collections import OrderedDict
-
+import random
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -15,6 +15,7 @@ import os
 from torchvision.transforms import Resize, Compose, ToTensor, Normalize
 import skimage
 import matplotlib.pyplot as plt
+import scipy
 
 import time
 from gplearn.genetic import SymbolicRegressor
@@ -181,27 +182,6 @@ def train_siren(dataloader):
 
 
 
-
-
-def run_sirens(ts, sirens, siren_count, sysout, err_thres):
-    cur_count = 0
-    syserr = sysout
-    while (cur_count < siren_count):
-        sysval, coords = sirens[cur_count]['Model'](ts)
-        syserr = syserr - sysval
-
-        print("Current System Error", torch.mean(torch.abs(syserr)))
-        err_vals = sirens[cur_count]['Model_Preds']
-
-        print("Error Threshold", (np.mean(err_vals) + 1 * np.std(err_vals)))
-        if torch.mean(torch.abs(syserr)).cpu().detach().numpy() > (np.mean(err_vals) + 1 * np.std(err_vals)):
-            cur_count += 1
-        else:
-            return syserr, cur_count
-        print("Count", cur_count, "Sirens", siren_count)
-    return syserr, cur_count
-
-
 def get_mgrid(sidelen, dim=2):
     '''Generates a flattened grid of (x,y,...) coordinates in a range of -1 to 1.
     sidelen: int
@@ -232,55 +212,23 @@ def powerset(iterable):
     return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
 
 
-def normal_func(sensor):
-    def normal_S1(x):
-        return np.sin(x)
-    def normal_S2(x):
-        return np.cos(x)
-
-    def normal_S3(x):
-        return np.cos(1.1*x)
-
-    if sensor == "S1":
-        return normal_S1
-
-    if sensor == "S2":
-        return normal_S2
-
-    if sensor == "S3":
-        return normal_S3
+def gradient(y, x, grad_outputs=None):
+    if grad_outputs is None:
+        grad_outputs = torch.ones_like(y)
+    grad = torch.autograd.grad(y, [x], grad_outputs=grad_outputs, create_graph=True)[0]
+    return grad
 
 
-def error_func(err,theta):
-    def error1(x):
-        return theta* np.sin(x)
-    def error2(x):
-        return theta* np.cos(x)
-    def error3(x):
-        return theta* np.sin(10*x)
-    def error4(x):
-        return theta* np.cos(5*x)
-
-    if err == "Error1":
-        return error1
-    if err == "Error2":
-        return error2
-    if err == "Error3":
-        return error3
-    if err == "Error4":
-        return error4
+def gradients_mse(model_output, coords, gt_gradients):
+    # compute gradients on the model
+    gradients = gradient(model_output, coords)
+    # compare them with the ground-truth
+    gradients_loss = torch.mean((gradients - gt_gradients).pow(2).sum(-1))
+    return gradients_loss
 
 
-def composite_err_func(err_list, theta_list, time_frame):
-    err_val = []
-    for err,theta in zip(err_list,theta_list):
-         err_val.append(error_func(err,theta)(time_frame))
-    return np.sum(err_val, axis=0)
-
-
-
-class BN():
-    def __init__(self, sensor_list, errors, prior_distributions, sigmas):
+class BNSIREN():
+    def __init__(self, sensor_list, errors, prior_distributions, sigmas, compound= True, fft=False):
         # sensor_list: how many sensors
         # errors: the errors associated with the sensors,
         # SHOULD BE {"S1": tuple[ERROR1, ERROR2, ..], "S2": tuple[ERROR1,ERROR2..]}
@@ -300,12 +248,21 @@ class BN():
         for sensor in sensor_list:
             self.sirens[sensor] = {}
         self.prior_distributions = prior_distributions
+        self.compound= compound
+        self.fft = fft
 
 
 
     def error_generation(self,error_list, error_name_list):
-        error_combination_list = list((powerset(error_list)))[1:]
-        error_name_combination_list = list((powerset(error_name_list)))[1:]
+        if self.compound is True:
+            error_combination_list = list((powerset(error_list)))[1:]
+            error_name_combination_list = list((powerset(error_name_list)))[1:]
+        else:
+            error_combination_list = []
+            error_name_combination_list = []
+            for i in range(len(error_list)):
+                error_combination_list.append(tuple([error_list[i]]))
+                error_name_combination_list.append(tuple([error_name_list[i]]))
 
         # Get all linear combinations of the experts' guess
         error_result_list = []
@@ -325,7 +282,7 @@ class BN():
         for sensor, error in self.errors.items():
             err_list = []
             for single_err in error:
-                err_list.append(self.prior_distributions[single_err](time_frame))
+                    err_list.append(self.prior_distributions[single_err](time_frame))
             err_list, err_name = self.error_generation(err_list, list(error))
             err_list.insert(0, normal_func(sensor)(time_frame))
             err_name.insert(0, ())
@@ -351,11 +308,11 @@ class BN():
         return index,value
 
 
-    def find_most_probable_error(self,err_names, probs):
+    def find_most_probable_error(self,err_names, probs,mse):
         ind, prob = self.get_max(probs)
-        print(ind, prob)
-        print(err_names[ind])
-        return err_names[ind], prob
+        #print(ind, prob)
+        #print(err_names[ind])
+        return err_names[ind], prob, mse[ind]
 
 
     def search_helper(self, err_prefix, err_name_prefix, errors, error_names):
@@ -377,7 +334,7 @@ class BN():
                 err_prefix.pop(targeted_sensors, self.errors_list[targeted_sensors][i])
                 err_name_prefix.pop(targeted_sensors,self.errors_name_list[targeted_sensors][i])
 
-    def train_siren(self,dataloader, error_term , sensor):
+    def train_siren(self,dataloader, error_term , sensor, ITER):
         if error_term not in self.sirens[sensor].keys():
              signal_siren = Siren(in_features=1, out_features=1, hidden_features=256,
                              hidden_layers=3, first_omega_0=3000, outermost_linear=True)
@@ -387,16 +344,11 @@ class BN():
              optim = torch.optim.Adam(lr=1e-4, params=signal_siren.parameters())
              model_input, ground_truth = next(iter(dataloader))
              model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
+             gt  = gradient(model_input, ground_truth)
              for step in range(total_steps):
                  model_output, coords = signal_siren(model_input)
                  loss = F.mse_loss(model_output, ground_truth)
-                 if not step % steps_til_summary:
-                     print("Step %d, Total loss %0.6f" % (step, loss))
-
-                # fig, axes = plt.subplots(1, 2)
-                # axes[0].plot(coords.squeeze().detach().cpu().numpy(), model_output.squeeze().detach().cpu().numpy())
-                # axes[1].plot(coords.squeeze().detach().cpu().numpy(), ground_truth.squeeze().detach().cpu().numpy())
-                # plt.show()
+                 #loss = gradients_mse(model_output, coords, gt)
                  optim.zero_grad()
                  loss.backward()
                  optim.step()
@@ -408,25 +360,20 @@ class BN():
              optim = torch.optim.Adam(lr=1e-4, params=signal_siren.parameters())
              model_input, ground_truth = next(iter(dataloader))
              model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
+             gt = gradient(model_input, ground_truth)
              for step in range(total_steps):
                 model_output, coords = signal_siren(model_input)
                 loss = F.mse_loss(model_output, ground_truth)
-                if not step % steps_til_summary:
-                    print("Step %d, Total loss %0.6f" % (step, loss))
-
-            # fig, axes = plt.subplots(1, 2)
-            # axes[0].plot(coords.squeeze().detach().cpu().numpy(), model_output.squeeze().detach().cpu().numpy())
-            # axes[1].plot(coords.squeeze().detach().cpu().numpy(), ground_truth.squeeze().detach().cpu().numpy())
-            # plt.show()
+                #loss = gradients_mse(model_output, coords, gt)
                 optim.zero_grad()
                 loss.backward()
                 optim.step()
 
-    def siren_update(self,sensor_inputs,time_frame, error_term,sensor):
+    def siren_update(self,sensor_inputs,time_frame, error_term,sensor, ITER):
         sensor_input = sensor_inputs[sensor]
         abnormal_signal = Signal_Data(time_frame, sensor_input)
         dataloader_signal = DataLoader(abnormal_signal, shuffle=False, batch_size=1, pin_memory=True, num_workers=0)
-        self.train_siren(dataloader=dataloader_signal,error_term=error_term,sensor = sensor)
+        self.train_siren(dataloader=dataloader_signal,error_term=error_term,sensor = sensor, ITER = ITER)
 
 
     def check_conflicts(self, errors, error_names):
@@ -462,7 +409,8 @@ class BN():
     # Baysian Calculation)
     # P(S2=y2|E3= 0,E4= 0)·P(S1=y1|E1= 1,E2= 0,E3= 0)· 1/ 16
     # Assuming each error occurs equally (so P(E1= 1)P(E2= 0)P(E3= 0)P(E4= 0) can be ignored )
-    def bayesian_calculation_update(self, sensor_inputs,time_frame):
+    def bayesian_calculation_update(self, sensor_inputs,time_frame, ITER):
+        mse_list = []
         self.create_error_lists(time_frame)
         err_names = []
         probs = []
@@ -474,28 +422,35 @@ class BN():
         for i in range(len(errors)):
             err_name = tuple(set([item for sublist in error_names[i].values() for item in sublist]))
             err_val = errors[i]
+            if self.fft is True:
+                for sensor in self.sensor_list:
+                        err_val[sensor] = scipy.ifft(err_val[sensor])
+
             for key, value in self.sirens.items():
                 if err_name in value.keys():
                     data_size = self.stored_data[err_name][1][key].shape[0]
                     val = self.error_calculation(error_list = err_name, sensor=key, x=time_frame)
                     err_val[key] = (1 - 1 / np.log(data_size)) * val + (1 / np.log(data_size)) * err_val[key]
-
             prob = 0.0
+            mses = {}
             for j in self.sensor_list:
                 for i in range(len(sensor_inputs[j])):
                     gaussian_err = norm.pdf(sensor_inputs[j][i], loc=err_val[j][i], scale=self.sigmas[j])
                     prob += np.log(gaussian_err)
 
+                mse = ((sensor_inputs[j] - err_val[j])**2).mean()
+                mses[j] = mse
+
             err_names.append(err_name)
             probs.append(prob)
+            mse_list.append(mses)
 
-        error, pro = self.find_most_probable_error(err_names, probs)
-        return error, pro, (err_names, probs)
-
+        error, pro, mse = self.find_most_probable_error(err_names, probs, mse_list)
+        return error, pro, mse
 
 
     # Train a new MLE that better fits the data
-    def update(self, time_frame, sensor_inputs,errors):
+    def update(self, time_frame, sensor_inputs,errors, ITER):
         self.update_data_map(time_frame,sensor_inputs,errors)
         #list of empty tuples
         error_list = {}
@@ -508,7 +463,7 @@ class BN():
                     error_list[key] = error_list[key] + (err,)
         for sensor_key,err_value in error_list.items():
             if err_value != ():
-                self.siren_update(sensor_inputs=sensor_inputs,time_frame=time_frame,error_term=errors,sensor = sensor_key)
+                self.siren_update(sensor_inputs=sensor_inputs,time_frame=time_frame,error_term=errors,sensor = sensor_key, ITER= ITER)
 
     # update data_map
     def update_data_map(self,time_frame,sensor_inputs,error):
@@ -527,36 +482,81 @@ class BN():
 
 
 
+def normal_func(sensor):
+    def normal_S1(x):
+        return np.sin(x)
+    def normal_S2(x):
+        return np.cos(x)
+
+    if sensor == "S1":
+        return normal_S1
+    if sensor == "S2":
+        return normal_S2
+
+
+def error_func(err, theta):
+    def error1(x):
+        return theta * np.cos(1.1 * x)
+
+    def error2(x):
+        return theta * np.sin(1.5 * x)
+
+    def error3(x):
+        return theta * np.cos(2.5 * x)
+
+    if err == "Error1":
+        return error1
+    if err == "Error2":
+        return error2
+    if err == "Error3":
+        return error3
+
 def main():
-    x = np.linspace(start=0, stop=50, num=50)
-    bn = BN(sensor_list=["S1", "S2"], errors={"S1": ["Error1", "Error2", "Error3"], "S2": ["Error3", "Error4"]},
-                  prior_distributions={"Error1": error_func("Error1", theta=4), "Error2": error_func("Error2", theta=2),
-                                       "Error3": error_func("Error3", theta=0.5),
-                                       "Error4": error_func("Error4", theta=-1)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
+    ITER = 0
+    mse_list = []
+    x_param = [0,0.1, 0.2,0.3, 0.4,0.5, 0.6,0.7,0.8,0.9,1.0]
 
-    sensor_inputs = {"S1": error_func("Error3", theta=0.25)(x), "S2": error_func("Error3", theta=0.3)(x)}
-    err, probs, _ = bn.bayesian_calculation_update(sensor_inputs, x)
-    bn.update(x, sensor_inputs, err)
+    fig = plt.figure()
+    ax = fig.add_subplot(1,1,1)
+    ax.set_facecolor((0.91,0.90,0.90))
+    accuracy_list = []
 
-    x = np.linspace(start=0, stop=50, num=50)
-    sensor_inputs = {"S1": error_func("Error3", theta=0.25)(x), "S2": error_func("Error3", theta=0.3)(x)}
-    err, prob, _ = bn.bayesian_calculation_update(sensor_inputs, x)
-    bn.update(x, sensor_inputs, err)
+    for j in x_param:
+        bn = BNSIREN(sensor_list=["S1", "S2"], errors={"S1": ["Error1", "Error2", "Error3"], "S2": ["Error1", "Error3"]},
+                prior_distributions={"Error1": error_func("Error1", 2), "Error2": error_func("Error2" , 0.8),
+                                     "Error3": error_func("Error3", 0.6)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
+        mse_sub = []
+        acc = 0
+        for i in range(50):
+            x = np.linspace(start=0, stop=50, num=50)
+            noise = np.random.normal(0,j,50)
 
-    x = np.linspace(start=0, stop=50, num=50)
-    sensor_inputs = {"S1": error_func("Error3", theta=0.25)(x), "S2": error_func("Error3", theta=0.3)(x)}
-    err, prob, _ = bn.bayesian_calculation_update(sensor_inputs, x)
-    bn.update(x, sensor_inputs, err)
+            sensor_inputs = {"S1":  0.3*np.sin(1.1*x) + noise, "S2": normal_func("S2")(x) + noise}
+            err, probs, mse = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
+            print(err)
+            if err == ('Error2',):
+                mse_sub.append(mse["S1"])
+                acc += 1
 
-    x = np.linspace(start=0, stop=50, num=50)
-    sensor_inputs = {"S1": error_func("Error3", theta=0.25)(x), "S2": error_func("Error3", theta=0.3)(x)}
-    err, prob, _ = bn.bayesian_calculation_update(sensor_inputs, x)
-    bn.update(x, sensor_inputs, err)
+
+
+            bn.update(x, sensor_inputs, err, ITER)
+            ITER +=1
+
+        accuracy_list.append(acc)
+        ax.plot(list(range(len(mse_sub))), mse_sub, c=(random.random(), random.random(), random.random()), label= "Noise: " + str(j))
+
+    print(accuracy_list)
+    ax.legend()
+    ax.grid()
+
+    ax.set_xlabel("Iterations")
+    ax.set_ylabel("MSE between actual signal and generated signal")
+    ax.set_title("MSE Convergence VS Noise of Observations")
+    plt.show()
+
+
 
 
 if __name__ == '__main__':
     main()
-
-
-
-
