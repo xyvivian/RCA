@@ -133,7 +133,7 @@ def powerset(iterable):
 
 
 class BNLSTM():
-    def __init__(self, sensor_list, errors, prior_distributions, sigmas, compound= True):
+    def __init__(self, sensor_list, errors, prior_distributions, sigmas, compound= True, fft= False):
         # sensor_list: how many sensors
         # errors: the errors associated with the sensors,
         # SHOULD BE {"S1": tuple[ERROR1, ERROR2, ..], "S2": tuple[ERROR1,ERROR2..]}
@@ -154,6 +154,7 @@ class BNLSTM():
             self.LSTM_list[sensor] = {}
         self.prior_distributions = prior_distributions
         self.compound = compound
+        self.fft = fft
 
 
 
