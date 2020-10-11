@@ -93,15 +93,15 @@ def main():
         # initilalize the BN(with expert's guesses)
         #####################################################Change the exepert guesses ################################
         bn = BNSIREN(sensor_list=sensors, errors={"S1": ["Error1", "Error2"], "S2": ["Error1", "Error3"]},
-                     prior_distributions={"Error1": error_func("Error1", 2, 3),
+                     prior_distributions={"Error1": error_func("Error1", 2, 5),
                                           "Error2": error_func("Error2", j, 1.5),
-                                          "Error3": error_func("Error3", 0.6, 2)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
+                                          "Error3": error_func("Error3", 0.6, 0.5)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
         # find the errors
         errors = bn.bayesian_net_possibilities(np.array([1, 1]))[1:]
 
         # get the actual errors
-        actual_errors = {"Error1": actual_error_func("Error1", 1.5, 3), "Error2": actual_error_func("Error2", 0.8, 1.5),
-                         "Error3": actual_error_func("Error3", 0.3, 2)}
+        actual_errors = {"Error1": actual_error_func("Error1", 1.5, 5), "Error2": actual_error_func("Error2", 0.8, 1.5),
+                         "Error3": actual_error_func("Error3", 0.3, 0.5)}
 
         error_overall_list = list(powerset(["Error1", "Error2", "Error3"]))[1:]
         for i in range(len(error_overall_list)):
@@ -148,6 +148,7 @@ def main():
 
             print(err,error)
 
+
             #Append the mse to the mse list according to the error types (notice we only observe sensor 1)
             mse_sub[err].append(mse["S1"])
 
@@ -155,6 +156,9 @@ def main():
             if err == ('Error2',):
                 if len(mse_sub[err]) == 25:
                     break
+
+            #in case we need experts in the loop!!!!
+            # err = error
 
             bn.update(x, sensor_inputs, err, ITER)
             ITER +=1
