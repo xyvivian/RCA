@@ -79,7 +79,7 @@ def generate_sensor_inputs(errors, actual_error_list, normal_func, sensors, time
 def main():
     mse_list = {}
     index = 0
-    x_param = [0.6,0.8,1.0,1.2,1.4,1.6,1.8,2.0]
+    x_param = [0.4,0.6,0.8,1.0,1.2,1.4,1.6]
 
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1)
@@ -94,23 +94,28 @@ def main():
         #####################################################Change the exepert guesses ################################
         bn = BNSIREN(sensor_list=sensors, errors={"S1": ["Error1", "Error2"], "S2": ["Error1", "Error3"]},
                      prior_distributions={"Error1": error_func("Error1", 2, 3),
-                                          "Error2": error_func("Error2", 0.8, 1.5),
+                                          "Error2": error_func("Error2", j, 1.5),
                                           "Error3": error_func("Error3", 0.6, 2)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
         # find the errors
         errors = bn.bayesian_net_possibilities(np.array([1, 1]))[1:]
 
         # get the actual errors
-        actual_errors = {"Error1": actual_error_func("Error1", 1.5, 3), "Error2": actual_error_func("Error2", j, 1.5),
+        actual_errors = {"Error1": actual_error_func("Error1", 1.5, 3), "Error2": actual_error_func("Error2", 0.8, 1.5),
                          "Error3": actual_error_func("Error3", 0.3, 2)}
 
         error_overall_list = list(powerset(["Error1", "Error2", "Error3"]))[1:]
+        for i in range(len(error_overall_list)):
+            error_overall_list[i] = tuple(sorted(error_overall_list[i]))
 
-        acc = 0
+        acc = {}
+        overall_trials ={}
         ITER = 0
         mse_sub = {}
 
         for i in error_overall_list:
             mse_sub[i]= []
+            acc[i] = 0
+            overall_trials[i] = 0
 
 
         while True:
@@ -126,22 +131,26 @@ def main():
 
             #generate random errors
             sensor_inputs = generate_sensor_inputs(error, actual_errors, normal_func, sensors, x, noise)
+            error = tuple(sorted(set(error["S1"] + error["S2"])))
             #MSE is the differences between observed samples and true samples
-            #Of the
             err, probs, mse = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
+
 
             print(err,error)
 
+            overall_trials[error] += 1
+
             #calculate the general accuracy
             if err == error:
-                acc += 1
+                acc[err] += 1
 
+            err = tuple(sorted(err))
             #Append the mse to the mse list according to the error types (notice we only observe sensor 1)
             mse_sub[err].append(mse["S1"])
 
             #calculate the mse of error 2
             if err == ('Error2',):
-                if len(mse_sub) == 30:
+                if len(mse_sub) == 25:
                     break
 
             bn.update(x, sensor_inputs, err, ITER)
@@ -150,8 +159,9 @@ def main():
         accuracy_list.append(acc)
         np.random.seed(index)
         color_arr = np.random.rand(3)
+        print("++++++++++++++++++++++++++++++++++++++++++++++++++++++Accuracy collected+++++++++++++++++++++++++++++++++++++++++++++")
         print(acc)
-        ax.plot(list(range(len(mse_sub))), mse_sub, c=(color_arr[0],color_arr[1],color_arr[2]), label= "Batch Size: " + str(j))
+        #ax.plot(list(range(len(mse_sub))), mse_sub, c=(color_arr[0],color_arr[1],color_arr[2]), label= "Batch Size: " + str(j))
         mse_list.append(mse_sub)
 
     print(accuracy_list)
