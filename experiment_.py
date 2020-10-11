@@ -150,7 +150,7 @@ def main():
 
             #calculate the mse of error 2
             if err == ('Error2',):
-                if len(mse_sub) == 25:
+                if len(mse_sub[err]) == 25:
                     break
 
             bn.update(x, sensor_inputs, err, ITER)
