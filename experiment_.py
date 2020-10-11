@@ -90,7 +90,8 @@ def plotting(x, error_val_, sensor_inputs):
 def main():
     mse_list = []
     index = 0
-    x_param = [0.4,0.6,0.8,1.0,1.2,1.4,1.6]
+    #x_param = [0.4,0.6,0.8,1.0,1.2,1.4,1.6]
+    x_param  =[5,10,15,20,25,30,35,40,45,50]
 
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1)
@@ -104,18 +105,18 @@ def main():
 
         # initilalize the BN(with expert's guesses)
         #####################################################Change the exepert guesses ################################
-        bn = BNSIREN(sensor_list=sensors, errors={"S1": ["Error1", "Error2"], "S2": ["Error1", "Error3"]},
+        bn = BNLSTM(sensor_list=sensors, errors={"S1": ["Error1", "Error2"], "S2": ["Error1", "Error3"]},
                      prior_distributions={"Error1": error_func("Error1", 2, 5),
-                                          "Error2": error_func("Error2", j, 1.5),
+                                          "Error2": error_func("Error2", 1.1, 1.9),
                                           "Error3": error_func("Error3", 0.6, 0.5)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
         # find the errors
         errors = bn.bayesian_net_possibilities(np.array([1, 1]))[1:]
 
         # get the actual errors
-        actual_errors = {"Error1": actual_error_func("Error1", 1.5, 5), "Error2": actual_error_func("Error2", 0.8, 1.5),
-                         "Error3": actual_error_func("Error3", 0.3, 0.5)}
+        actual_errors = {"Error1": actual_error_func("Error1", 2, 5), "Error2": actual_error_func("Error2", 0.8, 2.2),
+                         "Error3": actual_error_func("Error3", 0.6, 0.5)}
 
-        error_overall_list = list(powerset(["Error1", "Error2", "Error3"]))[1:]
+        error_overall_list = list(powerset(["Error1", "Error2", "Error3"]))
         for i in range(len(error_overall_list)):
             error_overall_list[i] = tuple(sorted(error_overall_list[i]))
 
@@ -131,15 +132,17 @@ def main():
 
 
         while True:
-
+            index += 1
             ##################################################Change the batch size ###################################
-            x = np.linspace(start=0, stop=20, num=20)
+            x = np.linspace(start=0, stop=j, num=j)
 
             ###################################################Change the noise of the input##########################
-            noise = np.random.normal(0,0.01,20)
+            noise = np.random.normal(0,0.01,j)
 
             #error is randomly chosen
             error = random.choices(errors, weights = [0.1,0.1,0.1,0.4, 0.1,0.1,0.1])[0]
+            #error = random.choices(errors)[0]
+            #error = {"S1":('Error1', 'Error2'), "S2":('Error1', 'Error3')}
 
             #generate random errors
             sensor_inputs = generate_sensor_inputs(error, actual_errors, normal_func, sensors, x, noise)
@@ -147,8 +150,8 @@ def main():
             #MSE is the differences between observed samples and true samples
             err, probs, mse, error_val_ = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
 
-            if err == ('Error2',):
-                plotting(x,error_val_, sensor_inputs)
+            #if err == ('Error2',):
+                #plotting(x,error_val_, sensor_inputs)
             overall_trials[error] += 1
 
             err = tuple(sorted(err))
@@ -161,15 +164,15 @@ def main():
 
 
             #Append the mse to the mse list according to the error types (notice we only observe sensor 1)
-            mse_sub[err].append(mse["S1"])
+            mse_sub[err].append(mse["S1"] / j)
 
             #calculate the mse of error 2
             if err == ('Error2',):
-                if len(mse_sub[err]) == 25:
+                if len(mse_sub[err]) == 30:
                     break
 
             #in case we need experts in the loop!!!!
-            # err = error
+            err = error
 
             bn.update(x, sensor_inputs, err, ITER)
             ITER +=1
@@ -180,18 +183,18 @@ def main():
         print("++++++++++++++++++++++++++++++++++++++++++++++++++++++Accuracy collected+++++++++++++++++++++++++++++++++++++++++++++")
         print(acc)
         print(overall_trials)
-        #ax.plot(list(range(len(mse_sub))), mse_sub, c=(color_arr[0],color_arr[1],color_arr[2]), label= "Batch Size: " + str(j))
+        ax.plot(list(range(len(mse_sub[('Error2',)]))), mse_sub[('Error2',)], c=(color_arr[0],color_arr[1],color_arr[2]), label= "Batch Size: " + str(j))
         mse_list.append(mse_sub[('Error2',)])
 
     print(accuracy_list)
-    #ax.legend()
-    #ax.grid()
+    ax.legend()
+    ax.grid()
 
-    #ax.set_xlabel("Iterations")
-    #ax.set_ylim(bottom=0, top = 0.15)
-    #ax.set_ylabel("MSE between actual signal and generated signal")
-    #ax.set_title("MSE Convergence VS Observations Batch Size")
-   # plt.show()
+    ax.set_xlabel("Iterations")
+    ax.set_ylim(bottom=0, top = 0.04)
+    ax.set_ylabel("Average MSE between actual signal and generated signal")
+    ax.set_title("MSE Convergence VS Observations Batch Size")
+    plt.show()
 
     #np.save("LSTM_expert_frequency.npy", np.array(mse_list))
 

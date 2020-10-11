@@ -150,6 +150,7 @@ class BNLSTM():
         self.stored_data = {}
         self.errors_list = {}
         self.errors_name_list = {}
+        self.stored_data = {"S1": {}, "S2": {}}
         for sensor in sensor_list:
             self.LSTM_list[sensor] = {}
         self.prior_distributions = prior_distributions
@@ -196,16 +197,18 @@ class BNLSTM():
             self.errors_list[sensor] = err_list
             self.errors_name_list[sensor] = err_name
 
+
     def error_calculation(self,error_list, sensor, x):
         model_input = convert_numpy_to_model_input(x)
-        lstm_model = self.LSTM_list[sensor][error_list]
-        output = lstm_model.forward(inputs= model_input, current_batch = 1)
+        output = self.LSTM_list[sensor][error_list](model_input, current_batch = 1)
         output = output.cpu().detach().numpy()
         output = output.reshape((output.shape[1],))
-        past_data = self.stored_data[error_list][1][sensor]
+        past_data = self.stored_data[sensor][error_list][1]
         scale = np.max(np.abs(past_data))
         output = output * scale
         return output
+
+
 
 
 
@@ -297,7 +300,10 @@ class BNLSTM():
     # Baysian Calculation)
     # P(S2=y2|E3= 0,E4= 0)·P(S1=y1|E1= 1,E2= 0,E3= 0)· 1/ 16
     # Assuming each error occurs equally (so P(E1= 1)P(E2= 0)P(E3= 0)P(E4= 0) can be ignored )
-    def bayesian_calculation_update(self, sensor_inputs,time_frame, ITER):
+    # Baysian Calculation)
+    # P(S2=y2|E3= 0,E4= 0)·P(S1=y1|E1= 1,E2= 0,E3= 0)· 1/ 16
+    # Assuming each error occurs equally (so P(E1= 1)P(E2= 0)P(E3= 0)P(E4= 0) can be ignored )
+    def bayesian_calculation_update(self, sensor_inputs, time_frame, ITER):
         error_val_list = []
         mse_list = []
         self.create_error_lists(time_frame)
@@ -311,24 +317,26 @@ class BNLSTM():
         for i in range(len(errors)):
             err_name = tuple(set([item for sublist in error_names[i].values() for item in sublist]))
             err_val = errors[i]
+            full_err_name = error_names[i]
             if self.fft is True:
                 for sensor in self.sensor_list:
-                        err_val[sensor] = scipy.ifft(err_val[sensor])
+                    err_val[sensor] = scipy.ifft(err_val[sensor])
+
             for key, value in self.LSTM_list.items():
-                if err_name in value.keys():
-                    data_size = self.stored_data[err_name][1][key].shape[0]
-                    val = self.error_calculation(error_list = err_name, sensor=key, x=time_frame)
+                if full_err_name[key] in value.keys():
+                    data_size = self.stored_data[key][full_err_name[key]][1].shape[0]
+                    val = self.error_calculation(error_list=full_err_name[key], sensor=key, x=time_frame)
                     err_val[key] = (1 - 1 / np.log(data_size)) * val + (1 / np.log(data_size)) * err_val[key]
-                #if err_name == ('Error2',):
-                 #   plt.clf()
-                 #   plt.plot(time_frame, err_val[key], color= "red", label = "Estimated Line")
-                #    plt.plot(time_frame, sensor_inputs[key], color = "green", label = "Actual Line")
-                #    plt.xlabel("Timestamp")
-                 #   plt.ylabel("Line Val")
-                 #   plt.title(str(ITER))
-                 #   plt.legend()
-                  #  plt.grid()
-                 #   plt.show()
+                # if err_name == ('Error2',):
+                # plt.clf()
+                # plt.plot(time_frame, err_val[key], color= "red", label = "Estimated Line")
+                # plt.plot(time_frame, sensor_inputs[key], color = "green", label = "Actual Line")
+                # plt.xlabel("Timestamp")
+                # plt.ylabel("Line Val")
+                # plt.title(str(ITER))
+                # plt.legend()
+                # plt.grid()
+                # plt.show()
             error_val_list.append(err_val)
             prob = 0.0
             mses = {}
@@ -337,15 +345,14 @@ class BNLSTM():
                     gaussian_err = norm.pdf(sensor_inputs[j][i], loc=err_val[j][i], scale=self.sigmas[j])
                     prob += np.log(gaussian_err)
 
-                mse = ((sensor_inputs[j] - err_val[j])**2).mean()
+                mse = ((sensor_inputs[j] - err_val[j]) ** 2).mean()
                 mses[j] = mse
 
-            mse_list.append(mses)
             err_names.append(err_name)
             probs.append(prob)
+            mse_list.append(mses)
 
-        ind, error, pro, mse = self.find_most_probable_error(err_names, probs,mse_list)
-
+        ind, error, pro, mse = self.find_most_probable_error(err_names, probs, mse_list)
         return error, pro, mse, error_val_list[ind]
 
 
@@ -367,19 +374,31 @@ class BNLSTM():
                 self.LSTM_update(sensor_inputs=sensor_inputs,time_frame=time_frame,error_term=errors,sensor = sensor_key, ITER= ITER)
 
     # update data_map
-    def update_data_map(self,time_frame,sensor_inputs,error):
-        if error in self.stored_data:
-            old_time_frame = self.stored_data[error][0]
-            old_sensors = self.stored_data[error][1]
+    def update_data_map(self,time_frame,sensor_inputs,errors):
+        #separate out the errors for each of the sensors
+        error_list = {}
+        for s in self.sensor_list:
+            error_list[s] = (tuple())
 
-            updated_time_frame = np.hstack((old_time_frame, time_frame))
-            updated_sensor_inputs = deepcopy(sensor_inputs)
-            for key,_ in updated_sensor_inputs.items():
-                updated_sensor_inputs[key] = np.hstack((old_sensors[key], sensor_inputs[key]))
+        for err in errors:
+            for key, value in self.errors.items():
+                if err in value:
+                    error_list[key] = error_list[key] + (err,)
+        for sensor in self.sensor_list:
+                 error = error_list[sensor]
+                 if error == tuple():
+                     continue
+                 if error in self.stored_data[sensor]:
+                     old_time_frame = self.stored_data[sensor][error][0]
+                     old_sensors = self.stored_data[sensor][error][1]
 
-            self.stored_data[error] = (updated_time_frame, updated_sensor_inputs)
-        else:
-            self.stored_data[error] = (time_frame, sensor_inputs)
+                     updated_time_frame = np.hstack((old_time_frame, time_frame))
+                     #updated_sensor_inputs = deepcopy(sensor_inputs[sensor])
+                     updated_sensor_inputs = np.hstack((old_sensors, sensor_inputs[sensor]))
+
+                     self.stored_data[sensor][error] = (updated_time_frame, updated_sensor_inputs)
+                 else:
+                     self.stored_data[sensor][error] = (time_frame, sensor_inputs[sensor])
 
 
 def normal_func(sensor):
@@ -409,54 +428,3 @@ def error_func(err, theta):
         return error2
     if err == "Error3":
         return error3
-
-def main():
-    mse_list = []
-    x_param = [0,0.1, 0.2,0.3, 0.4,0.5, 0.6,0.7,0.8,0.9,1.0]
-
-    fig = plt.figure()
-    ax = fig.add_subplot(1,1,1)
-    ax.set_facecolor((0.91,0.90,0.90))
-    accuracy_list = []
-
-    for j in x_param:
-        bn = BNLSTM(sensor_list=["S1", "S2"], errors={"S1": ["Error1", "Error2", "Error3"], "S2": ["Error1", "Error3"]},
-                prior_distributions={"Error1": error_func("Error1", 2), "Error2": error_func("Error2" , 0.8),
-                                     "Error3": error_func("Error3", 0.6)}, sigmas={"S1": 1, "S2": 1, "S3": 1})
-        mse_sub = []
-        acc = 0
-        ITER = 0
-        for i in range(50):
-            x = np.linspace(start=0, stop=50, num=50)
-            noise = np.random.normal(0,j,50)
-
-            sensor_inputs = {"S1":  0.3*np.sin(1.1*x) + noise, "S2": normal_func("S2")(x) + noise}
-            err, probs, mse = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
-            print(err)
-            if err == ('Error2',):
-                mse_sub.append(mse["S1"])
-                acc += 1
-
-
-
-            bn.update(x, sensor_inputs, err, ITER)
-            ITER +=1
-
-        accuracy_list.append(acc)
-        ax.plot(list(range(len(mse_sub))), mse_sub, c=(random.random(), random.random(), random.random()), label= "Noise: " + str(j))
-
-    print(accuracy_list)
-    ax.legend()
-    ax.grid()
-
-    ax.set_xlabel("Iterations")
-    ax.set_ylabel("MSE between actual signal and generated signal")
-    ax.set_title("MSE Convergence VS Noise of Observations")
-    plt.show()
-
-
-
-
-if __name__ == '__main__':
-    main()
-
