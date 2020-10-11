@@ -77,7 +77,7 @@ def generate_sensor_inputs(errors, actual_error_list, normal_func, sensors, time
 
 
 def main():
-    mse_list = {}
+    mse_list = []
     index = 0
     x_param = [0.4,0.6,0.8,1.0,1.2,1.4,1.6]
 
@@ -136,15 +136,18 @@ def main():
             err, probs, mse = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
 
 
-            print(err,error)
+
 
             overall_trials[error] += 1
+
+            err = tuple(sorted(err))
 
             #calculate the general accuracy
             if err == error:
                 acc[err] += 1
 
-            err = tuple(sorted(err))
+            print(err,error)
+
             #Append the mse to the mse list according to the error types (notice we only observe sensor 1)
             mse_sub[err].append(mse["S1"])
 
@@ -161,8 +164,9 @@ def main():
         color_arr = np.random.rand(3)
         print("++++++++++++++++++++++++++++++++++++++++++++++++++++++Accuracy collected+++++++++++++++++++++++++++++++++++++++++++++")
         print(acc)
+        print(overall_trials)
         #ax.plot(list(range(len(mse_sub))), mse_sub, c=(color_arr[0],color_arr[1],color_arr[2]), label= "Batch Size: " + str(j))
-        mse_list.append(mse_sub)
+        mse_list.append(mse_sub[('Error2',)])
 
     print(accuracy_list)
     #ax.legend()
