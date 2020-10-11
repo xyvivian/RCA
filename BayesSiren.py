@@ -308,11 +308,11 @@ class BNSIREN():
         return index,value
 
 
-    def find_most_probable_error(self,err_names, probs,mse):
+    def find_most_probable_error(self,err_names, probs,mses):
         ind, prob = self.get_max(probs)
         #print(ind, prob)
         #print(err_names[ind])
-        return err_names[ind], prob, mse[ind]
+        return ind, err_names[ind], prob, mses[ind]
 
 
     def search_helper(self, err_prefix, err_name_prefix, errors, error_names):
@@ -419,6 +419,7 @@ class BNSIREN():
     # P(S2=y2|E3= 0,E4= 0)·P(S1=y1|E1= 1,E2= 0,E3= 0)· 1/ 16
     # Assuming each error occurs equally (so P(E1= 1)P(E2= 0)P(E3= 0)P(E4= 0) can be ignored )
     def bayesian_calculation_update(self, sensor_inputs,time_frame, ITER):
+        error_val_list = []
         mse_list = []
         self.create_error_lists(time_frame)
         err_names = []
@@ -450,6 +451,7 @@ class BNSIREN():
                     #plt.legend()
                     #plt.grid()
                     #plt.show()
+            error_val_list.append(err_val)
             prob = 0.0
             mses = {}
             for j in self.sensor_list:
@@ -464,8 +466,8 @@ class BNSIREN():
             probs.append(prob)
             mse_list.append(mses)
 
-        error, pro, mse = self.find_most_probable_error(err_names, probs, mse_list)
-        return error, pro, mse
+        ind, error, pro, mse = self.find_most_probable_error(err_names, probs, mse_list)
+        return error, pro, mse, error_val_list[ind]
 
 
     # Train a new MLE that better fits the data

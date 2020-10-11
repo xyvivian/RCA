@@ -219,7 +219,7 @@ class BNLSTM():
         ind, prob = self.get_max(probs)
         #print(ind, prob)
         #indx = err_names.index(('Error2',))
-        return err_names[ind], prob, mses[ind]
+        return ind, err_names[ind], prob, mses[ind]
 
 
     def search_helper(self, err_prefix, err_name_prefix, errors, error_names):
@@ -298,6 +298,7 @@ class BNLSTM():
     # P(S2=y2|E3= 0,E4= 0)·P(S1=y1|E1= 1,E2= 0,E3= 0)· 1/ 16
     # Assuming each error occurs equally (so P(E1= 1)P(E2= 0)P(E3= 0)P(E4= 0) can be ignored )
     def bayesian_calculation_update(self, sensor_inputs,time_frame, ITER):
+        error_val_list = []
         mse_list = []
         self.create_error_lists(time_frame)
         err_names = []
@@ -328,6 +329,7 @@ class BNLSTM():
                  #   plt.legend()
                   #  plt.grid()
                  #   plt.show()
+            error_val_list.append(err_val)
             prob = 0.0
             mses = {}
             for j in self.sensor_list:
@@ -342,8 +344,9 @@ class BNLSTM():
             err_names.append(err_name)
             probs.append(prob)
 
-        error, pro, mse = self.find_most_probable_error(err_names, probs,mse_list)
-        return error, pro, mse
+        ind, error, pro, mse = self.find_most_probable_error(err_names, probs,mse_list)
+
+        return error, pro, mse, error_val_list[ind]
 
 
 

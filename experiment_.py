@@ -76,6 +76,17 @@ def generate_sensor_inputs(errors, actual_error_list, normal_func, sensors, time
     return sensor_input
 
 
+def plotting(x, error_val_, sensor_inputs):
+    plt.clf()
+    plt.plot(x, error_val_["S1"], color="red", label="Estimated Line")
+    plt.plot(x, sensor_inputs["S1"], color="green", label="Actual Line")
+    plt.xlabel("Timestamp")
+    plt.ylabel("Line Val")
+    plt.title("Comparison between Estimated and Actual")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
 def main():
     mse_list = []
     index = 0
@@ -86,6 +97,7 @@ def main():
     ax.set_facecolor((0.91,0.90,0.90))
     accuracy_list = []
     sensors = ["S1", "S2"]
+
 
 
     for j in x_param:
@@ -133,11 +145,10 @@ def main():
             sensor_inputs = generate_sensor_inputs(error, actual_errors, normal_func, sensors, x, noise)
             error = tuple(sorted(set(error["S1"] + error["S2"])))
             #MSE is the differences between observed samples and true samples
-            err, probs, mse = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
+            err, probs, mse, error_val_ = bn.bayesian_calculation_update(sensor_inputs, x, ITER)
 
-
-
-
+            if err == ('Error2',):
+                plotting(x,error_val_, sensor_inputs)
             overall_trials[error] += 1
 
             err = tuple(sorted(err))
